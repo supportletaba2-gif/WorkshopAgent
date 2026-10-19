@@ -25,8 +25,8 @@
     </Feature>
     <InstallExecuteSequence>
       <Custom Action="StopOldAgent" Before="InstallFiles" Condition="NOT REMOVE" />
-      <Custom Action="PrepareAgentConfig" Before="WriteAgentConfig" Condition="NOT REMOVE AND (NOT WIX_UPGRADE_DETECTED OR WLINKGROUP <> "")" />
-      <Custom Action="WriteAgentConfig" After="InstallFiles" Condition="NOT REMOVE AND (NOT WIX_UPGRADE_DETECTED OR WLINKGROUP <> "")" />
+      <Custom Action="PrepareAgentConfig" Before="WriteAgentConfig" Condition="NOT REMOVE AND (NOT WIX_UPGRADE_DETECTED OR WLINKGROUP &lt;&gt; &quot;&quot;)" />
+      <Custom Action="WriteAgentConfig" After="InstallFiles" Condition="NOT REMOVE AND (NOT WIX_UPGRADE_DETECTED OR WLINKGROUP &lt;&gt; &quot;&quot;)" />
     </InstallExecuteSequence>
   </Package>
 
