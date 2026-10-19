@@ -14,7 +14,7 @@ public static class LinkConstants
     public const string ConsoleServiceName = "WorkshopCommandCenter";
     public const string ConsoleServiceDisplayName = "Workshop Command Center";
     public const string ConsoleInstallDirectory = @"C:\Program Files\Workshop Command Center";
-    public const string ProductVersion = "1.0.132";
+    public const string ProductVersion = "1.0.133";
 
     public static bool AgentIsCurrent(string? version) =>
         Version.TryParse(version, out var found) && found >= new Version(1, 0, 90);

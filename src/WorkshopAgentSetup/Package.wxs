@@ -2,7 +2,7 @@
   <Package
       Name="Workshop Command Center Agent"
       Manufacturer="Workshop Link"
-      Version="1.0.132.0"
+      Version="1.0.133.0"
       UpgradeCode="7E4B9C2A-1D6F-4A83-9C55-8F2E6B0D4A17"
       Scope="perMachine"
       Compressed="yes">
@@ -15,7 +15,7 @@
     <Property Id="WLINKCONFIRM" Secure="yes" Hidden="yes" />
     <Property Id="WLINKPLACE" Value="lan" />
     <Property Id="WLINKPASSERROR" Secure="yes" />
-    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="Workshop Link Agent 1.0.132 is installed. The desktop shortcut opens the status page. A green tick means the agent is running." />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="Workshop Link Agent 1.0.133 is installed. The desktop shortcut opens the status page. A green tick means the agent is running." />
     <InstallUISequence>
       <Show Dialog="WorkshopSetupDlg" Before="ExecuteAction" Condition="NOT REMOVE" />
     </InstallUISequence>
@@ -24,8 +24,8 @@
     </Feature>
     <InstallExecuteSequence>
       <Custom Action="StopOldAgent" Before="InstallFiles" Condition="NOT REMOVE" />
-      <Custom Action="PrepareAgentConfig" Before="WriteAgentConfig" Condition="NOT REMOVE" />
-      <Custom Action="WriteAgentConfig" After="InstallFiles" Condition="NOT REMOVE" />
+      <Custom Action="PrepareAgentConfig" Before="WriteAgentConfig" Condition="NOT REMOVE AND NOT WIX_UPGRADE_DETECTED" />
+      <Custom Action="WriteAgentConfig" After="InstallFiles" Condition="NOT REMOVE AND NOT WIX_UPGRADE_DETECTED" />
     </InstallExecuteSequence>
   </Package>
 
@@ -103,7 +103,7 @@
         Impersonate="no"
         Return="check" />
     <UI>
-      <Dialog Id="WorkshopSetupDlg" Width="370" Height="270" Title="Workshop Link Agent 1.0.132">
+      <Dialog Id="WorkshopSetupDlg" Width="370" Height="270" Title="Workshop Link Agent 1.0.133">
         <Control Id="Title" Type="Text" X="15" Y="12" Width="340" Height="18" Text="{\WixUI_Font_Title}Command center password" />
         <Control Id="Body" Type="Text" X="15" Y="36" Width="340" Height="36" Text="This password is only for the command center. It is not a Windows logon. Use at least 12 characters, with upper-case, lower-case, and a number or symbol." />
         <Control Id="PassLabel" Type="Text" X="15" Y="80" Width="90" Height="14" Text="Password" />
