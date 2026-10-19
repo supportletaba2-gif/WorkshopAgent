@@ -1,20 +1,22 @@
 using System.Diagnostics;
 using System.Text;
+using WorkshopLink.Protocol;
 
 namespace WorkshopAgent;
 
 internal static class WorkshopSetup
 {
-    public static Task InstallAsync(string password, string place, IProgress<string> progress, CancellationToken cancellationToken) =>
-        RunAsync(InstallScript, password, place, progress, cancellationToken);
+    public static Task InstallAsync(string password, string place, string? group, IProgress<string> progress, CancellationToken cancellationToken) =>
+        RunAsync(InstallScript, password, place, group, progress, cancellationToken);
 
     public static Task RemoveAsync(IProgress<string> progress, CancellationToken cancellationToken) =>
-        RunAsync(RemoveScript, password: null, place: null, progress, cancellationToken);
+        RunAsync(RemoveScript, password: null, place: null, group: null, progress, cancellationToken);
 
     private static async Task RunAsync(
         string script,
         string? password,
         string? place,
+        string? group,
         IProgress<string> progress,
         CancellationToken cancellationToken)
     {
@@ -37,6 +39,8 @@ internal static class WorkshopSetup
                 start.Environment["WLINK_PASS"] = password;
             if (!string.IsNullOrEmpty(place))
                 start.Environment["WLINK_PLACE"] = place;
+            if (AgentPlace.IsGroupKey(group))
+                start.Environment["WLINK_GROUP"] = group!.Trim().ToUpperInvariant();
 
             using var process = new Process { StartInfo = start, EnableRaisingEvents = true };
             if (!process.Start())
@@ -136,6 +140,14 @@ internal static class WorkshopSetup
           Write-Output 'This PC has no local network address, so it will register through Cloudflare.'
         }
         Set-Content -LiteralPath (Join-Path $stateDir 'placement.txt') -Value $place -Encoding ascii -NoNewline
+        $group = $env:WLINK_GROUP
+        Remove-Item Env:\WLINK_GROUP -ErrorAction SilentlyContinue
+        if ($group -match '^[A-Za-z0-9]{4}-[A-Za-z0-9]{4}$') {
+          Set-Content -LiteralPath (Join-Path $stateDir 'group.txt') -Value $group.ToUpper() -Encoding ascii -NoNewline
+          Write-Output "This PC will join group $($group.ToUpper())."
+        } else {
+          Write-Output 'No group key. This PC is not placed in a group.'
+        }
         Write-Output "Stored the command center password for $account. The Windows password on that account was not changed."
 
         $leftover = Get-LocalUser -Name 'WorkshopLink' -ErrorAction SilentlyContinue

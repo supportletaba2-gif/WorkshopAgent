@@ -2,7 +2,7 @@
   <Package
       Name="Workshop Command Center Agent"
       Manufacturer="Workshop Link"
-      Version="1.0.133.0"
+      Version="1.0.134.0"
       UpgradeCode="7E4B9C2A-1D6F-4A83-9C55-8F2E6B0D4A17"
       Scope="perMachine"
       Compressed="yes">
@@ -14,18 +14,19 @@
     <Property Id="WLINKPASS" Secure="yes" Hidden="yes" />
     <Property Id="WLINKCONFIRM" Secure="yes" Hidden="yes" />
     <Property Id="WLINKPLACE" Value="lan" />
+    <Property Id="WLINKGROUP" Secure="yes" />
     <Property Id="WLINKPASSERROR" Secure="yes" />
-    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="Workshop Link Agent 1.0.133 is installed. The desktop shortcut opens the status page. A green tick means the agent is running." />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="Workshop Link Agent 1.0.134 is installed. The desktop shortcut opens the status page. A green tick means the agent is running." />
     <InstallUISequence>
-      <Show Dialog="WorkshopSetupDlg" Before="ExecuteAction" Condition="NOT REMOVE" />
+      <Show Dialog="WorkshopSetupDlg" Before="ExecuteAction" Condition="NOT REMOVE AND NOT WIX_UPGRADE_DETECTED" />
     </InstallUISequence>
     <Feature Id="Main" Title="Workshop Command Center Agent" Level="1">
       <ComponentGroupRef Id="AgentFiles" />
     </Feature>
     <InstallExecuteSequence>
       <Custom Action="StopOldAgent" Before="InstallFiles" Condition="NOT REMOVE" />
-      <Custom Action="PrepareAgentConfig" Before="WriteAgentConfig" Condition="NOT REMOVE AND NOT WIX_UPGRADE_DETECTED" />
-      <Custom Action="WriteAgentConfig" After="InstallFiles" Condition="NOT REMOVE AND NOT WIX_UPGRADE_DETECTED" />
+      <Custom Action="PrepareAgentConfig" Before="WriteAgentConfig" Condition="NOT REMOVE AND (NOT WIX_UPGRADE_DETECTED OR WLINKGROUP <> "")" />
+      <Custom Action="WriteAgentConfig" After="InstallFiles" Condition="NOT REMOVE AND (NOT WIX_UPGRADE_DETECTED OR WLINKGROUP <> "")" />
     </InstallExecuteSequence>
   </Package>
 
@@ -103,7 +104,7 @@
         Impersonate="no"
         Return="check" />
     <UI>
-      <Dialog Id="WorkshopSetupDlg" Width="370" Height="270" Title="Workshop Link Agent 1.0.133">
+      <Dialog Id="WorkshopSetupDlg" Width="370" Height="318" Title="Workshop Link Agent 1.0.134">
         <Control Id="Title" Type="Text" X="15" Y="12" Width="340" Height="18" Text="{\WixUI_Font_Title}Command center password" />
         <Control Id="Body" Type="Text" X="15" Y="36" Width="340" Height="36" Text="This password is only for the command center. It is not a Windows logon. Use at least 12 characters, with upper-case, lower-case, and a number or symbol." />
         <Control Id="PassLabel" Type="Text" X="15" Y="80" Width="90" Height="14" Text="Password" />
@@ -116,13 +117,15 @@
             <RadioButton Value="offsite" X="0" Y="20" Width="330" Height="16" Text="This PC is offsite. Connect it through Cloudflare." />
           </RadioButtonGroup>
         </Control>
-        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Text="&amp;Next" Default="yes">
+        <Control Id="GroupLabel" Type="Text" X="15" Y="196" Width="340" Height="28" Text="Group key, optional. Looks like ABCD-EFGH. Local and offsite both use it. Leave blank if this PC has no group." />
+        <Control Id="GroupKey" Type="Edit" X="15" Y="226" Width="325" Height="18" Property="WLINKGROUP" />
+        <Control Id="Next" Type="PushButton" X="236" Y="288" Width="56" Height="17" Text="&amp;Next" Default="yes">
           <Publish Event="SpawnDialog" Value="PasswordProblemDlg" Condition="NOT (WLINKPASS = WLINKCONFIRM) OR WLINKPASS = &quot;&quot;" />
           <Publish Event="DoAction" Value="CheckPassword" Condition="WLINKPASS = WLINKCONFIRM AND WLINKPASS &lt;&gt; &quot;&quot;" />
           <Publish Event="SpawnDialog" Value="PasswordWeakDlg" Condition="WLINKPASS = WLINKCONFIRM AND WLINKPASS &lt;&gt; &quot;&quot; AND WLINKPASSERROR &lt;&gt; &quot;&quot;" />
           <Publish Event="EndDialog" Value="Return" Condition="WLINKPASS = WLINKCONFIRM AND WLINKPASS &lt;&gt; &quot;&quot; AND WLINKPASSERROR = &quot;&quot;" />
         </Control>
-        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Text="Cancel" Cancel="yes">
+        <Control Id="Cancel" Type="PushButton" X="304" Y="288" Width="56" Height="17" Text="Cancel" Cancel="yes">
           <Publish Event="EndDialog" Value="Exit" />
         </Control>
       </Dialog>

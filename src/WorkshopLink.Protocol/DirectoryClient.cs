@@ -96,7 +96,8 @@ public sealed class DirectoryClient : IAsyncDisposable
                     publicKey = PeerIdentity.PublicKey,
                     signature = PeerIdentity.Sign(nonce),
                     role = _role,
-                    place = self.Place == "offsite" ? "offsite" : "lan"
+                    place = self.Place == "offsite" ? "offsite" : "lan",
+                    group = self.Group ?? ""
                 });
                 await SendAsync(socket, announce, cancellationToken);
                 while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
@@ -321,6 +322,7 @@ public sealed class DirectoryClient : IAsyncDisposable
                     Id = peer.GetProperty("id").GetString() ?? "",
                     Version = peer.GetProperty("version").GetString() ?? "",
                     Place = peer.TryGetProperty("place", out var place) ? place.GetString() ?? "lan" : "lan",
+                    Group = peer.TryGetProperty("group", out var groupKey) ? groupKey.GetString() ?? "" : "",
                     Cpu = ReadNumber(peer, "cpu"),
                     Ram = ReadNumber(peer, "ram"),
                     Disk = ReadNumber(peer, "disk"),

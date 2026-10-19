@@ -75,7 +75,9 @@ internal sealed class LanAnnouncer : IDisposable
             Id = PeerIdentity.Fingerprint,
             Capabilities = "desktop,inventory",
             Arch = MachineFacts.Architecture(),
-            Version = LinkConstants.ProductVersion
+            Version = LinkConstants.ProductVersion,
+            Place = AgentPlace.IsOffsite() ? "offsite" : "lan",
+            Group = AgentPlace.GroupKey()
         };
         var health = MachineFacts.ReadHealth();
         message.Cpu = health.Cpu;

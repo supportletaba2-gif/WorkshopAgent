@@ -64,6 +64,7 @@ internal sealed class BeaconWorker(ILogger<BeaconWorker> logger) : BackgroundSer
                 Version = LinkConstants.ProductVersion,
                 Link = true,
                 Place = offsite ? "offsite" : "lan",
+                Group = AgentPlace.GroupKey(),
                 Cpu = health.Cpu,
                 Ram = health.Ram,
                 Disk = health.Disk,

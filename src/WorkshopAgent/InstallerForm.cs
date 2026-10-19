@@ -31,6 +31,7 @@ internal sealed class InstallerForm : Form
     private readonly CheckBox _saved = new();
     private readonly RadioButton _onLan = new();
     private readonly RadioButton _offsite = new();
+    private readonly TextBox _group = new();
     private readonly Panel _ready = new();
     private readonly Label _readyTitle = new();
     private readonly Label _readyDetail = new();
@@ -171,6 +172,25 @@ internal sealed class InstallerForm : Form
         };
         place.Controls.Add(_onLan);
         place.Controls.Add(_offsite);
+        _group.PlaceholderText = "Group key, or leave blank";
+        StyleBox(_group);
+        var groupLine = new Label
+        {
+            AutoSize = true,
+            MaximumSize = new Size(680, 0),
+            ForeColor = Muted,
+            Margin = new Padding(0, 6, 0, 2),
+            Text = "Paste a group key from the command center. Local and offsite both use it. Leave it blank if this PC has no group."
+        };
+        var groupBox = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Margin = new Padding(0, 2, 0, 4)
+        };
+        groupBox.Controls.Add(groupLine);
+        groupBox.Controls.Add(_group);
 
         _version.AutoSize = true;
         _version.MaximumSize = new Size(680, 0);
@@ -219,6 +239,7 @@ internal sealed class InstallerForm : Form
         grid.Controls.Add(_password, 0, 3);
         grid.Controls.Add(_saved, 0, 4);
         grid.Controls.Add(place, 0, 5);
+        grid.Controls.Add(groupBox, 0, 6);
         grid.Controls.Add(buttons, 0, 7);
         grid.Controls.Add(_log, 0, 8);
         _setup.Controls.Add(grid);
@@ -412,6 +433,12 @@ internal sealed class InstallerForm : Form
         if (confirm != DialogResult.Yes)
             return;
 
+        var group = _group.Text.Trim();
+        if (group.Length > 0 && !AgentPlace.IsGroupKey(group))
+        {
+            MessageBox.Show(this, "The group key should look like ABCD-EFGH, or leave the box blank.", "Workshop Link");
+            return;
+        }
         var password = _password.Text;
         _password.Clear();
         _installed = false;
@@ -433,7 +460,7 @@ internal sealed class InstallerForm : Form
                     LegacyAgent.Remove();
                     progress.Report("The older agent has been removed.");
                 }
-                return WorkshopSetup.InstallAsync(password, _offsite.Checked ? "offsite" : "lan", progress, _work!.Token);
+                return WorkshopSetup.InstallAsync(password, _offsite.Checked ? "offsite" : "lan", group, progress, _work!.Token);
             }));
         if (ok)
             StartLink();

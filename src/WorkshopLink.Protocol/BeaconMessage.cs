@@ -26,6 +26,7 @@ public sealed class BeaconMessage
     public string Capabilities { get; set; } = "desktop,inventory";
     public string Version { get; set; } = LinkConstants.ProductVersion;
     public string Place { get; set; } = "lan";
+    public string Group { get; set; } = "";
     public string Wan { get; set; } = "";
     public string Warp { get; set; } = "";
     public int Cpu { get; set; }
@@ -65,6 +66,7 @@ public sealed class BeaconMessage
             message.Version = string.IsNullOrWhiteSpace(message.Version)
                 ? LinkConstants.ProductVersion
                 : message.Version.Trim();
+            message.Group = AgentPlace.IsGroupKey(message.Group) ? message.Group.Trim().ToUpperInvariant() : "";
             return message;
         }
         catch (JsonException)
