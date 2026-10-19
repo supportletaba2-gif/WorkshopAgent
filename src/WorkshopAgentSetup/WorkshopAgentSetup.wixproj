@@ -1,0 +1,16 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <PropertyGroup>
+    <OutputName>WorkshopAgent</OutputName>
+    <OutputType>Package</OutputType>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <Platform>x64</Platform>
+    <SuppressIces>ICE43;ICE57;ICE61</SuppressIces>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />
+    <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />
+  </ItemGroup>
+  <Target Name="CopyToPublishSetup" AfterTargets="Build">
+    <Copy SourceFiles="$(OutputPath)WorkshopAgent.msi" DestinationFolder="$(MSBuildThisFileDirectory)..\..\publish\setup\Agent\" SkipUnchangedFiles="false" />
+  </Target>
+</Project>

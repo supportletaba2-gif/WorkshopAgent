@@ -1,0 +1,12 @@
+wlinkav1.dll contains the AV1 decoder dav1d 1.5.1 and the AV1 encoder libaom 3.12.1.
+Both are built into this library. Windows does not have to supply either codec.
+
+dav1d
+Copyright (c) 2018-2019, VideoLAN and dav1d authors
+All rights reserved.
+BSD 2-Clause License. The full text is licenses/dav1d-COPYING.
+
+libaom
+Copyright (c) 2016, Alliance for Open Media. All rights reserved.
+BSD 2-Clause License and the Alliance for Open Media Patent License 1.0.
+The full text is licenses/libaom-LICENSE and licenses/libaom-PATENTS.
