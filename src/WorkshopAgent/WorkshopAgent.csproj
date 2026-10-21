@@ -8,7 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.0.136</Version>
+    <Version>1.0.137</Version>
     <ApplicationIcon>workshop-link.ico</ApplicationIcon>
     <AssemblyName>WorkshopAgent</AssemblyName>
     <RootNamespace>WorkshopAgent</RootNamespace>

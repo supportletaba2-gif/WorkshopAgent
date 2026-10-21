@@ -54,21 +54,6 @@ internal static class ConsoleGate
             return "This PC is locked after wrong passwords. Wait 15 minutes.";
         }
 
-        if (!Paired(console))
-        {
-            var fingerprint = console.Length >= 16 ? console[..16] : console;
-            var allow = Ask("Command center " + fingerprint + " wants to manage this PC. Allow it? Only allow a command center you set up.");
-            if (allow != 6 || !Pair(console))
-            {
-                Audit(console, action, "refused new command center");
-                if (allow == 6)
-                    return "This PC already trusts ten command centers.";
-                return PromptFailure(allow, "This PC did not allow that command center.");
-            }
-
-            Audit(console, action, "paired command center");
-        }
-
         var passwordOk = LinkSecret.Verify(LinkWorker.ReadHash(), password);
         var ticketOk = Quiet(action) && Accepts(environment.GetValueOrDefault("WLINK_TICKET"), console);
         if (!passwordOk && !ticketOk)
@@ -87,6 +72,28 @@ internal static class ConsoleGate
         if (passwordOk)
             _fails = 0;
 
+        if (!Paired(console))
+        {
+            if (!passwordOk)
+            {
+                Audit(console, action, "refused ticket for a new command center");
+                return "Type the password on the command center. A screen ticket cannot do that.";
+            }
+
+            var fingerprint = console.Length >= 16 ? console[..16] : console;
+            Audit(console, action, "asking the person at this PC");
+            var allow = Ask("Command center " + fingerprint + " wants to manage this PC. Allow it? Only allow a command center you set up.");
+            if (allow != 6 || !Pair(console))
+            {
+                Audit(console, action, "refused new command center");
+                if (allow == 6)
+                    return "This PC already trusts ten command centers.";
+                return PromptFailure(allow, "This PC did not allow that command center.");
+            }
+
+            Audit(console, action, "paired command center");
+        }
+
         if (!Quiet(action) && action is not "agentupdate")
         {
             if (!passwordOk)
@@ -95,6 +102,7 @@ internal static class ConsoleGate
                 return "Type the password on the command center. A screen ticket cannot do that.";
             }
 
+            Audit(console, action, "asking the person at this PC");
             var allow = Ask(PromptFor(action, detail));
             if (allow != 6)
             {
@@ -229,6 +237,7 @@ internal static class ConsoleGate
 
     private static int Ask(string message)
     {
+        EnableSessionPrivileges();
         var sessions = new List<int>();
         var console = WTSGetActiveConsoleSessionId();
         if (console > 0)
@@ -239,22 +248,9 @@ internal static class ConsoleGate
                 sessions.Add(session);
         }
 
-        foreach (var session in sessions)
-        {
-            var answer = Send(session, message);
-            if (answer != int.MinValue)
-                return answer;
-        }
-
+        if (sessions.Count == 0)
+            return -1;
         return ShowInSession(sessions, message);
-    }
-
-    private static int Send(int session, string message)
-    {
-        const int style = 0x4 | 0x30 | 0x100 | 0x10000 | 0x40000;
-        var title = "Workshop Link";
-        var ok = WTSSendMessage(IntPtr.Zero, session, title, (title.Length + 1) * 2, message, (message.Length + 1) * 2, style, 60, out var response, true);
-        return ok ? response : int.MinValue;
     }
 
     private static List<int> ActiveSessions()
@@ -268,7 +264,7 @@ internal static class ConsoleGate
             for (var index = 0; index < count; index++)
             {
                 var row = Marshal.PtrToStructure<WtsSession>(pointer + index * size);
-                if (row.SessionId > 0 && row.State == 0)
+                if (row.SessionId > 0 && row.State is 0 or 1)
                     list.Add(row.SessionId);
             }
         }
@@ -290,6 +286,16 @@ internal static class ConsoleGate
         {
             Directory.CreateDirectory(Folder);
             File.WriteAllText(path, message, new UTF8Encoding(false));
+            try
+            {
+                var info = new FileInfo(path);
+                var security = info.GetAccessControl();
+                security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null), FileSystemRights.ReadAndExecute, AccessControlType.Allow));
+                info.SetAccessControl(security);
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
             foreach (var session in sessions)
             {
                 var answer = Launch(exe, path, session);
@@ -315,33 +321,80 @@ internal static class ConsoleGate
         try
         {
             if (!DuplicateTokenEx(token, 0x10000000, IntPtr.Zero, 2, 1, out var primary))
+            {
+                Audit("", "allow", "token failed " + Marshal.GetLastWin32Error());
                 return int.MinValue;
+            }
             try
             {
-                var start = new StartupInfo { Cb = Marshal.SizeOf<StartupInfo>(), Desktop = "winsta0\\default" };
+                var start = new StartupInfo
+                {
+                    Cb = Marshal.SizeOf<StartupInfo>(),
+                    Desktop = "winsta0\\default",
+                    Flags = 1,
+                    ShowWindow = 1
+                };
                 var command = "\"" + exe + "\" --ask \"" + path + "\"";
-                if (!CreateProcessAsUser(primary, null, command, IntPtr.Zero, IntPtr.Zero, false, 0, IntPtr.Zero, null, ref start, out var info))
-                    return int.MinValue;
+                var directory = Path.GetDirectoryName(exe);
+                var environment = IntPtr.Zero;
+                var createdEnvironment = CreateEnvironmentBlock(out environment, primary, false);
                 try
                 {
-                    if (WaitForSingleObject(info.Process, 60000) != 0)
+                    const uint unicodeEnvironment = 0x400;
+                    if (!CreateProcessAsUser(primary, exe, command, IntPtr.Zero, IntPtr.Zero, false, unicodeEnvironment, createdEnvironment ? environment : IntPtr.Zero, directory, ref start, out var info))
                     {
-                        TerminateProcess(info.Process, 32000);
-                        return 32000;
+                        Audit("", "allow", "window failed " + Marshal.GetLastWin32Error());
+                        return int.MinValue;
                     }
+                    try
+                    {
+                        if (WaitForSingleObject(info.Process, 60000) != 0)
+                        {
+                            TerminateProcess(info.Process, 32000);
+                            return 32000;
+                        }
 
-                    return GetExitCodeProcess(info.Process, out var code) ? code : int.MinValue;
+                        return GetExitCodeProcess(info.Process, out var code) ? code : int.MinValue;
+                    }
+                    finally
+                    {
+                        CloseHandle(info.Thread);
+                        CloseHandle(info.Process);
+                    }
                 }
                 finally
                 {
-                    CloseHandle(info.Thread);
-                    CloseHandle(info.Process);
+                    if (createdEnvironment)
+                        DestroyEnvironmentBlock(environment);
                 }
             }
             finally
             {
                 CloseHandle(primary);
             }
+        }
+        finally
+        {
+            CloseHandle(token);
+        }
+    }
+
+    private static void EnableSessionPrivileges()
+    {
+        EnablePrivilege("SeIncreaseQuotaPrivilege");
+        EnablePrivilege("SeAssignPrimaryTokenPrivilege");
+    }
+
+    private static void EnablePrivilege(string name)
+    {
+        if (!OpenProcessToken(GetCurrentProcess(), 0x0020 | 0x0008, out var token))
+            return;
+        try
+        {
+            if (!LookupPrivilegeValue(null, name, out var luid))
+                return;
+            var privileges = new TokenPrivileges { Count = 1, Luid = luid, Attributes = 2 };
+            AdjustTokenPrivileges(token, false, ref privileges, 0, IntPtr.Zero, IntPtr.Zero);
         }
         finally
         {
@@ -429,8 +482,31 @@ internal static class ConsoleGate
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(nint handle);
 
-    [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern bool WTSSendMessage(IntPtr server, int sessionId, string title, int titleBytes, string message, int messageBytes, int style, int timeoutSeconds, out int response, bool wait);
+    [DllImport("kernel32.dll")]
+    private static extern nint GetCurrentProcess();
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool OpenProcessToken(nint process, uint access, out nint token);
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool LookupPrivilegeValue(string? system, string name, out long luid);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool AdjustTokenPrivileges(nint token, bool disableAll, ref TokenPrivileges privileges, int length, IntPtr previous, IntPtr returned);
+
+    [DllImport("userenv.dll", SetLastError = true)]
+    private static extern bool CreateEnvironmentBlock(out IntPtr environment, nint token, bool inherit);
+
+    [DllImport("userenv.dll", SetLastError = true)]
+    private static extern bool DestroyEnvironmentBlock(IntPtr environment);
+
+    [StructLayout(LayoutKind.Explicit)]
+    private struct TokenPrivileges
+    {
+        [FieldOffset(0)] public int Count;
+        [FieldOffset(4)] public long Luid;
+        [FieldOffset(12)] public int Attributes;
+    }
 }
 
 internal static class OpenViews

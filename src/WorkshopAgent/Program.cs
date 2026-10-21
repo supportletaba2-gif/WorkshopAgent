@@ -79,7 +79,7 @@ internal static class Program
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question,
                 MessageBoxDefaultButton.Button2,
-                MessageBoxOptions.DefaultDesktopOnly);
+                MessageBoxOptions.DefaultDesktopOnly | (MessageBoxOptions)0x40000);
             try
             {
                 if (!string.IsNullOrWhiteSpace(path))
