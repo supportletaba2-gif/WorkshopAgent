@@ -83,7 +83,7 @@ internal static class ConsoleGate
 
             var fingerprint = console.Length >= 16 ? console[..16] : console;
             Audit(console, action, "asking the person at this PC");
-            var allow = Ask("Command center " + fingerprint + " wants to manage this PC. Allow it? Only allow a command center you set up.");
+            var allow = Ask("Command center " + fingerprint + " wants to manage this PC. Allow it? Click Yes only if you set up that command center.");
             if (allow != 6 || !Pair(console))
             {
                 Audit(console, action, "refused new command center");
@@ -162,7 +162,7 @@ internal static class ConsoleGate
         var extra = string.IsNullOrWhiteSpace(detail) ? "" : "\n\n" + detail;
         if (extra.Length > 400)
             extra = extra[..400];
-        return "The command center wants to " + what + " on this PC. Allow it?" + extra;
+        return "The command center wants to " + what + " on this PC. Click Yes to allow it." + extra;
     }
 
     private static bool SafePath(string? path)
@@ -233,7 +233,7 @@ internal static class ConsoleGate
             return denied;
         if (answer == 32000)
             return "The question timed out on that PC. Try again and click Yes on its screen.";
-        return "This PC could not show the allow question. Sign in on that PC and try again.";
+        return "This PC could not show the allow question (" + answer + "). Sign in on that PC and try again.";
     }
 
     private static int Ask(string message)
@@ -251,6 +251,12 @@ internal static class ConsoleGate
 
         if (sessions.Count == 0)
             return -1;
+        foreach (var session in sessions)
+        {
+            if (SendToSession(session, message, out var shown))
+                return shown;
+        }
+
         return ShowInSession(sessions, message);
     }
 
@@ -277,6 +283,22 @@ internal static class ConsoleGate
         return list;
     }
 
+    private static bool SendToSession(int session, string message, out int answer)
+    {
+        answer = -1;
+        if (session <= 0)
+            return false;
+        const int yesNoQuestion = 0x4 | 0x20 | 0x100 | 0x10000 | 0x40000;
+        var title = "Workshop Link";
+        if (!WTSSendMessage(IntPtr.Zero, session, title, (title.Length + 1) * 2, message, (message.Length + 1) * 2, yesNoQuestion, 60, out answer, true))
+        {
+            Audit("", "allow", "session question failed " + Marshal.GetLastWin32Error());
+            return false;
+        }
+
+        return answer is 6 or 7 or 32000;
+    }
+
     private static int ShowInSession(List<int> sessions, string message)
     {
         var exe = Environment.ProcessPath;
@@ -287,12 +309,18 @@ internal static class ConsoleGate
         {
             Directory.CreateDirectory(Folder);
             File.WriteAllText(path, message, new UTF8Encoding(false));
+            var answerPath = path + ".answer";
+            File.WriteAllText(answerPath, "");
             try
             {
-                var info = new FileInfo(path);
-                var security = info.GetAccessControl();
-                security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null), FileSystemRights.ReadAndExecute, AccessControlType.Allow));
-                info.SetAccessControl(security);
+                foreach (var file in new[] { path, answerPath })
+                {
+                    var info = new FileInfo(file);
+                    var security = info.GetAccessControl();
+                    var rights = file == path ? FileSystemRights.ReadAndExecute : FileSystemRights.Modify;
+                    security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null), rights, AccessControlType.Allow));
+                    info.SetAccessControl(security);
+                }
             }
             catch (UnauthorizedAccessException)
             {
@@ -310,9 +338,25 @@ internal static class ConsoleGate
         finally
         {
             try { File.Delete(path); } catch (IOException) { }
+            try { File.Delete(path + ".answer"); } catch (IOException) { }
         }
 
         return -1;
+    }
+
+    private static int ReadAnswer(string path, int exitCode)
+    {
+        try
+        {
+            var answerPath = path + ".answer";
+            if (File.Exists(answerPath) && int.TryParse(File.ReadAllText(answerPath).Trim(), out var written) && written is 6 or 7 or 32000)
+                return written;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+        }
+
+        return exitCode;
     }
 
     private static int Launch(string exe, string path, int session)
@@ -352,10 +396,11 @@ internal static class ConsoleGate
                         if (WaitForSingleObject(info.Process, 60000) != 0)
                         {
                             TerminateProcess(info.Process, 32000);
-                            return 32000;
+                            return ReadAnswer(path, 32000);
                         }
 
-                        return GetExitCodeProcess(info.Process, out var code) ? code : int.MinValue;
+                        var code = GetExitCodeProcess(info.Process, out var exited) ? exited : int.MinValue;
+                        return ReadAnswer(path, code);
                     }
                     finally
                     {
@@ -464,6 +509,9 @@ internal static class ConsoleGate
 
     [DllImport("wtsapi32.dll", SetLastError = true)]
     private static extern bool WTSQueryUserToken(int sessionId, out nint token);
+
+    [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool WTSSendMessage(IntPtr server, int sessionId, string title, int titleBytes, string message, int messageBytes, int style, int timeoutSeconds, out int response, bool wait);
 
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern bool DuplicateTokenEx(nint token, uint access, nint attributes, int level, int type, out nint primary);

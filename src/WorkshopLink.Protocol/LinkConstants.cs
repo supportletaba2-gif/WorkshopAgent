@@ -14,7 +14,7 @@ public static class LinkConstants
     public const string ConsoleServiceName = "WorkshopCommandCenter";
     public const string ConsoleServiceDisplayName = "Workshop Command Center";
     public const string ConsoleInstallDirectory = @"C:\Program Files\Workshop Command Center";
-    public const string ProductVersion = "1.0.141";
+    public const string ProductVersion = "1.0.142";
 
     public static byte[] LocalPipeKey { get; } = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("WorkshopLink local network"));
 

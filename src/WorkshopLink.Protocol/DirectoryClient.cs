@@ -111,7 +111,7 @@ public sealed class DirectoryClient : IAsyncDisposable
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
                 Note(ex.Message);
-                try { await Task.Delay(TimeSpan.FromSeconds(8), cancellationToken); }
+                try { await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken); }
                 catch (OperationCanceledException) { break; }
             }
         }
@@ -147,12 +147,26 @@ public sealed class DirectoryClient : IAsyncDisposable
         await SendAsync(socket, JsonSerializer.Serialize(new { type = "signal", to, payload }), cancellationToken);
     }
 
+    private ClientWebSocket? ConnectedSocket(TimeSpan wait)
+    {
+        var until = Environment.TickCount64 + (long)wait.TotalMilliseconds;
+        while (true)
+        {
+            var socket = _socket;
+            if (_admitted && socket is not null && socket.State == WebSocketState.Open)
+                return socket;
+            if (Environment.TickCount64 >= until)
+                return null;
+            Thread.Sleep(250);
+        }
+    }
+
     public DirectoryPipe OpenPipe(string to)
     {
         if (string.IsNullOrWhiteSpace(to))
             throw new InvalidOperationException("That PC has not joined the directory.");
-        var socket = _socket;
-        if (socket is null || socket.State != WebSocketState.Open)
+        var socket = ConnectedSocket(TimeSpan.FromSeconds(12));
+        if (socket is null)
             throw new InvalidOperationException("The directory is not connected.");
         var pipe = new DirectoryPipe(this, to);
         DirectoryPipe? previous;

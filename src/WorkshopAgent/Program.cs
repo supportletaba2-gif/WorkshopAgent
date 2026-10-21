@@ -62,7 +62,7 @@ internal static class Program
         if (Has(args, "--ask"))
         {
             var path = args.SkipWhile(arg => !string.Equals(arg, "--ask", StringComparison.OrdinalIgnoreCase)).Skip(1).FirstOrDefault();
-            var message = "A command center wants to manage this PC. Allow it? Only allow a command center you set up.";
+            var message = "A command center wants to manage this PC. Click Yes only if you set up that command center.";
             try
             {
                 if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
@@ -80,6 +80,16 @@ internal static class Program
                 MessageBoxIcon.Question,
                 MessageBoxDefaultButton.Button2,
                 MessageBoxOptions.DefaultDesktopOnly | (MessageBoxOptions)0x40000);
+            var code = yes == DialogResult.Yes ? 6 : 7;
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(path))
+                    File.WriteAllText(path + ".answer", code.ToString());
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+            }
+
             try
             {
                 if (!string.IsNullOrWhiteSpace(path))
@@ -89,7 +99,7 @@ internal static class Program
             {
             }
 
-            Environment.Exit(yes == DialogResult.Yes ? 6 : 7);
+            Environment.Exit(code);
         }
 
         if (Has(args, "--sas"))
