@@ -612,24 +612,40 @@ public static class BuiltInScript
             'agentupdate' {
               $folder = 'C:\WorkshopLink\Incoming'
               New-Item -ItemType Directory -Force -Path $folder | Out-Null
-              $setup = Join-Path $folder 'WorkshopAgentSetup.exe'
-              $headers = @{ 'User-Agent' = 'WorkshopLink'; Accept = 'application/vnd.github+json' }
-              try {
-                $release = Invoke-RestMethod -Headers $headers -Uri 'https://api.github.com/repos/supportletaba2-gif/WorkshopAgent/releases/latest'
-              } catch {
-                throw 'The public WorkshopAgent repository has no release yet. Publish WorkshopAgentSetup.exe there, then try again.'
-              }
-              $asset = @($release.assets) | Where-Object { $_.name -eq 'WorkshopAgentSetup.exe' } | Select-Object -First 1
-              if (-not $asset) { throw 'The latest GitHub release does not include WorkshopAgentSetup.exe.' }
-              $url = [string]$asset.browser_download_url
-              if ($url -notmatch '^https://(github\.com|objects\.githubusercontent\.com|release-assets\.githubusercontent\.com)/') { throw 'The download address was not GitHub.' }
-              Invoke-WebRequest -Headers $headers -Uri $url -OutFile $setup
-              $task = 'WorkshopLinkAgentUpdate'
+              $runner = Join-Path $folder 'update-agent.ps1'
+              $body = @'
+$ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$setup = "C:\WorkshopLink\Incoming\WorkshopAgentSetup.exe"
+try {
+  $headers = @{ "User-Agent" = "WorkshopLink"; Accept = "application/vnd.github+json" }
+  $release = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/supportletaba2-gif/WorkshopAgent/releases/latest"
+  $asset = @($release.assets) | Where-Object { $_.name -eq "WorkshopAgentSetup.exe" } | Select-Object -First 1
+  if (-not $asset) { throw "The latest GitHub release does not include WorkshopAgentSetup.exe." }
+  $url = [string]$asset.browser_download_url
+  if ($url -notmatch "^https://(github\.com|objects\.githubusercontent\.com|release-assets\.githubusercontent\.com)/") { throw "The download address was not GitHub." }
+  $curl = Join-Path $env:SystemRoot "System32\curl.exe"
+  if (-not (Test-Path -LiteralPath $curl)) { throw "Windows curl was not found." }
+  & $curl -fsSL -L --retry 3 --retry-delay 2 -A "WorkshopLink" -o $setup $url
+  if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $setup)) { throw "The download did not finish." }
+  $task = "WorkshopLinkAgentUpdate"
+  & schtasks.exe /Delete /TN $task /F | Out-Null
+  & schtasks.exe /Create /TN $task /TR "`"$setup`" /quiet /norestart" /SC ONCE /ST 23:59 /RL HIGHEST /RU SYSTEM /F | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "The update could not be started." }
+  & schtasks.exe /Run /TN $task | Out-Null
+} catch {
+  Set-Content -LiteralPath "C:\WorkshopLink\Incoming\update-agent.txt" -Value $_.Exception.Message -Encoding ascii
+  exit 1
+}
+'@
+              Set-Content -LiteralPath $runner -Value $body -Encoding ascii
+              $task = 'WorkshopLinkAgentFetch'
               & schtasks.exe /Delete /TN $task /F | Out-Null
-              & schtasks.exe /Create /TN $task /TR "`"$setup`" /quiet /norestart" /SC ONCE /ST 23:59 /RL HIGHEST /RU SYSTEM /F | Out-Null
+              & schtasks.exe /Create /TN $task /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$runner`"" /SC ONCE /ST 23:59 /RL HIGHEST /RU SYSTEM /F | Out-Null
               if ($LASTEXITCODE -ne 0) { throw 'The update could not be started.' }
               & schtasks.exe /Run /TN $task | Out-Null
-              'UPDATE installing. The agent already on this PC is replaced. The password and place stay. Nobody at the PC has to press anything.'
+              'UPDATE started. This PC is downloading the agent. Nobody at the PC has to press anything.'
             }
             'command' {
               $command = $env:WLINK_CMD

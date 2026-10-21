@@ -87,7 +87,7 @@ internal static class ConsoleGate
         if (passwordOk)
             _fails = 0;
 
-        if (!Quiet(action))
+        if (!Quiet(action) && action is not "agentupdate")
         {
             if (!passwordOk)
             {

@@ -2,7 +2,7 @@
   <Bundle
       Name="Workshop Command Center Agent"
       Manufacturer="Workshop Link"
-      Version="1.0.134.0"
+      Version="1.0.135.0"
       UpgradeCode="B6D41F08-2A77-4E5C-9C13-70A8E2F45D61">
     <BootstrapperApplication>
       <bal:WixStandardBootstrapperApplication LicenseUrl="" Theme="hyperlinkLicense" ShowVersion="yes" SuppressOptionsUI="yes" />
