@@ -15,6 +15,15 @@ namespace WorkshopAgent;
 
 internal static class ScreenShare
 {
+    private static bool _controlDown;
+    private static int _suppressClip;
+    private static Stream? _helperPipe;
+    private static int _dropX = -1;
+    private static int _dropY = -1;
+    private static long _dropSize = -1;
+    private static string _dropName = "";
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _dropFolder = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> _dropGot = new(StringComparer.OrdinalIgnoreCase);
     private static string _desktop = "";
     private static int _frameCodec;
     private static int _effectsOn;
@@ -365,12 +374,6 @@ internal static class ScreenShare
                 Volatile.Write(ref watcher.Beat, Environment.TickCount64);
                 if (kind == LinkPipe.ScreenBye)
                     break;
-                if (kind == LinkPipe.ScreenFile)
-                {
-                    SaveIncoming(payload);
-                    continue;
-                }
-
                 if (kind == LinkPipe.ScreenSecure)
                 {
                     SendSecureAttention();
@@ -391,7 +394,12 @@ internal static class ScreenShare
                 }
 
                 if (kind == LinkPipe.ScreenStatus)
-                    continue;
+                {
+                    var text = Encoding.UTF8.GetString(payload);
+                    if (!text.StartsWith("drop ", StringComparison.Ordinal))
+                        continue;
+                }
+
                 var packet = new byte[1 + payload.Length];
                 packet[0] = kind;
                 payload.CopyTo(packet, 1);
@@ -476,11 +484,26 @@ internal static class ScreenShare
                     }
                 }, cancellationToken);
             };
-            files.Ready += (transfer, name, size) =>
+            files.Began += (transfer, name, _) => folders.TryAdd("name:" + transfer, name);
+            files.Piece += (transfer, last, data) =>
             {
-                var folder = folders.TryRemove(transfer, out var path) ? path : @"C:\WorkshopLink\Incoming";
+                if (!folders.TryGetValue(transfer, out var folder))
+                    return;
+                var name = files.NameOf(transfer);
+                if (string.IsNullOrWhiteSpace(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+                    name = "file";
                 Directory.CreateDirectory(folder);
-                _ = files.DownloadAsync(transfer, Path.Combine(folder, Path.GetFileName(name)), cancellationToken);
+                var path = Path.Combine(folder, name);
+                var mode = folders.ContainsKey("open:" + transfer) ? FileMode.Append : FileMode.Create;
+                folders["open:" + transfer] = "1";
+                using var output = new FileStream(path, mode, FileAccess.Write, FileShare.Read);
+                if (data.Length > 0)
+                    output.Write(data, 0, data.Length);
+                if (last)
+                {
+                    folders.TryRemove(transfer, out _);
+                    folders.TryRemove("open:" + transfer, out _);
+                }
             };
             await files.ConnectAsync(PeerIdentity.Fingerprint, "source", cancellationToken);
             await Task.Delay(Timeout.Infinite, cancellationToken);
@@ -517,6 +540,12 @@ internal static class ScreenShare
                 var lines = text.Split('\n');
                 if (lines.Length >= 2 && PasteAnswers.TryRemove(lines[0], out var wait))
                     wait.TrySetResult((lines[1] == "yes", lines.Length > 2 ? lines[2] : @"C:\WorkshopLink\Incoming"));
+                continue;
+            }
+
+            if (body[0] == LinkPipe.ScreenClip || body[0] == LinkPipe.ScreenFile)
+            {
+                await WriteRoomAsync(body[0], body[1..], cancellationToken);
                 continue;
             }
 
@@ -674,19 +703,19 @@ internal static class ScreenShare
         }
     }
 
-    private static void SaveIncoming(byte[] payload)
+    private static string? SaveIncoming(byte[] payload)
     {
         if (payload.Length < 8)
-            return;
+            return null;
         var nameLength = BitConverter.ToInt32(payload, 0);
         if (nameLength is < 1 or > 180 || payload.Length < 8 + nameLength)
-            return;
+            return null;
         var name = Path.GetFileName(Encoding.UTF8.GetString(payload, 4, nameLength));
         if (string.IsNullOrWhiteSpace(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
-            return;
+            return null;
         var offset = BitConverter.ToInt32(payload, 4 + nameLength);
         if (offset < 0 || offset > 512 * 1024 * 1024)
-            return;
+            return null;
         var start = 8 + nameLength;
         var folder = @"C:\WorkshopLink\Incoming";
         Directory.CreateDirectory(folder);
@@ -694,6 +723,7 @@ internal static class ScreenShare
         if (offset > 0)
             file.Position = offset;
         file.Write(payload, start, payload.Length - start);
+        return name;
     }
 
     private static async Task ReadExactAsync(Stream stream, byte[] buffer, CancellationToken cancellationToken)
@@ -719,6 +749,7 @@ internal static class ScreenShare
         PhysicalDesktop.MakeAware();
         using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
         pipe.Connect(20000);
+        _helperPipe = pipe;
         using var cts = new CancellationTokenSource();
         InputDesktop.AttachStation();
         CancellationTokenSource? borderStop = null;
@@ -1039,7 +1070,7 @@ internal static class ScreenShare
             var length = new byte[4];
             ReadExact(pipe, length);
             var size = BitConverter.ToInt32(length);
-            if (size <= 0 || size > 65536)
+            if (size <= 0 || size > 4_000_000)
                 return;
             var packet = new byte[size];
             ReadExact(pipe, packet);
@@ -1073,12 +1104,100 @@ internal static class ScreenShare
             InputDesktop.AttachOnce();
             ReadExact(pipe, length);
             var size = BitConverter.ToInt32(length);
-            if (size <= 0 || size > 65536)
+            if (size <= 0 || size > 4_000_000)
                 break;
             var packet = new byte[size];
             ReadExact(pipe, packet);
             ApplyInput(packet);
         }
+    }
+
+    private static void PasteText(string text)
+    {
+        Interlocked.Increment(ref _suppressClip);
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                Clipboard.SetText(text);
+                PressKey(0x11, false, false);
+                PressKey(0x56, false, false);
+                PressKey(0x56, true, false);
+                PressKey(0x11, true, false);
+            }
+            catch (Exception ex) when (ex is ExternalException or InvalidOperationException)
+            {
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _suppressClip);
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.IsBackground = true;
+        thread.Start();
+    }
+
+    private static void PublishClipboard(Stream? pipe)
+    {
+        if (pipe is null)
+            return;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                Thread.Sleep(200);
+                if (Clipboard.ContainsFileDropList())
+                {
+                    foreach (string? file in Clipboard.GetFileDropList())
+                    {
+                        if (!string.IsNullOrWhiteSpace(file))
+                            SendClipboardFile(pipe, file);
+                    }
+                    return;
+                }
+
+                if (!Clipboard.ContainsText())
+                    return;
+                var text = Clipboard.GetText() ?? "";
+                if (text.Length == 0)
+                    return;
+                if (text.Length > 30000)
+                    text = text[..30000];
+                WriteCodedFrame(pipe, LinkPipe.ScreenClip, Encoding.UTF8.GetBytes(text));
+            }
+            catch (Exception ex) when (ex is ExternalException or InvalidOperationException or IOException)
+            {
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.IsBackground = true;
+        thread.Start();
+    }
+
+    private static void SendClipboardFile(Stream pipe, string path)
+    {
+        var info = new FileInfo(path);
+        if (!info.Exists || info.Length > 512L * 1024 * 1024)
+            return;
+        var nameBytes = Encoding.UTF8.GetBytes(info.Name);
+        if (nameBytes.Length is < 1 or > 180)
+            return;
+        using var input = File.OpenRead(path);
+        var offset = 0;
+        var buffer = new byte[256 * 1024];
+        int read;
+        while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            var payload = new byte[8 + nameBytes.Length + read];
+            BitConverter.GetBytes(nameBytes.Length).CopyTo(payload, 0);
+            nameBytes.CopyTo(payload, 4);
+            BitConverter.GetBytes(offset).CopyTo(payload, 4 + nameBytes.Length);
+            Buffer.BlockCopy(buffer, 0, payload, 8 + nameBytes.Length, read);
+            WriteCodedFrame(pipe, LinkPipe.ScreenFile, payload);
+            offset += read;
+        }
+        WriteCodedFrame(pipe, LinkPipe.ScreenStatus, Encoding.UTF8.GetBytes("filedone " + info.Name));
     }
 
     private static void ApplyInput(byte[] packet)
@@ -1096,8 +1215,28 @@ internal static class ScreenShare
         }
         else if (packet[0] == LinkPipe.ScreenKey && packet.Length >= 9)
         {
+            var virtualKey = BitConverter.ToInt32(packet, 1);
+            var up = BitConverter.ToInt32(packet, 5) != 0;
             var extended = packet.Length >= 13 && BitConverter.ToInt32(packet, 9) != 0;
-            PressKey(BitConverter.ToInt32(packet, 1), BitConverter.ToInt32(packet, 5) != 0, extended);
+            if (virtualKey is 0x11 or 0xA2 or 0xA3)
+                _controlDown = !up;
+            PressKey(virtualKey, up, extended);
+            if (up && virtualKey == 0x43 && _controlDown && _suppressClip == 0)
+                PublishClipboard(_helperPipe);
+        }
+        else if (packet[0] == LinkPipe.ScreenClip && packet.Length > 1 && packet.Length <= 40000)
+        {
+            PasteText(Encoding.UTF8.GetString(packet, 1, packet.Length - 1));
+        }
+        else if (packet[0] == LinkPipe.ScreenStatus)
+        {
+            var text = Encoding.UTF8.GetString(packet, 1, packet.Length - 1);
+            if (text.StartsWith("drop ", StringComparison.Ordinal))
+                RememberDrop(text);
+        }
+        else if (packet[0] == LinkPipe.ScreenFile && packet.Length > 1)
+        {
+            SaveWhereOpen(packet.AsSpan(1).ToArray());
         }
         else if (packet[0] == LinkPipe.ScreenPrivacy && packet.Length >= 2)
         {
@@ -1146,35 +1285,242 @@ internal static class ScreenShare
         thread.Start();
     }
 
-    private static string OpenFolder()
+    private static void RememberDrop(string text)
+    {
+        var parts = text.Split(' ', 5);
+        if (parts.Length < 5)
+            return;
+        if (!int.TryParse(parts[1], out var x) || !int.TryParse(parts[2], out var y) || !long.TryParse(parts[3], out var size))
+            return;
+        _dropX = x;
+        _dropY = y;
+        _dropSize = size;
+        _dropName = parts[4];
+    }
+
+    private static void SaveWhereOpen(byte[] payload)
+    {
+        if (payload.Length < 8)
+            return;
+        var nameLength = BitConverter.ToInt32(payload, 0);
+        if (nameLength is < 1 or > 180 || payload.Length < 8 + nameLength)
+            return;
+        var name = Path.GetFileName(Encoding.UTF8.GetString(payload, 4, nameLength));
+        if (string.IsNullOrWhiteSpace(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            return;
+        var offset = BitConverter.ToInt32(payload, 4 + nameLength);
+        if (offset < 0 || offset > 512 * 1024 * 1024)
+            return;
+        var start = 8 + nameLength;
+        if (offset == 0 || !_dropFolder.ContainsKey(name))
+        {
+            var aimed = string.Equals(_dropName, name, StringComparison.OrdinalIgnoreCase) && _dropX >= 0 && _dropY >= 0;
+            var folder = aimed
+                ? FolderFor(_dropX, _dropY, true)
+                : FolderFor(ScreenState.PointerX, ScreenState.PointerY, ScreenState.PointerSeen);
+            _dropFolder[name] = folder;
+            _dropGot[name] = 0;
+        }
+
+        if (!_dropFolder.TryGetValue(name, out var chosen) || string.IsNullOrWhiteSpace(chosen))
+            chosen = DesktopFolder();
+        string path;
+        try
+        {
+            path = WritePiece(chosen, name, offset, payload, start);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            var desktop = DesktopFolder();
+            if (string.Equals(desktop, chosen, StringComparison.OrdinalIgnoreCase))
+            {
+                Tell("Could not copy " + name + " into the open folder.");
+                return;
+            }
+            try
+            {
+                _dropFolder[name] = desktop;
+                path = WritePiece(desktop, name, offset, payload, start);
+            }
+            catch (Exception again) when (again is IOException or UnauthorizedAccessException)
+            {
+                Tell("Could not copy " + name + " into the open folder.");
+                return;
+            }
+        }
+
+        var got = _dropGot.AddOrUpdate(name, payload.Length - start, (_, soFar) => soFar + (payload.Length - start));
+        var expected = string.Equals(_dropName, name, StringComparison.OrdinalIgnoreCase) ? _dropSize : -1;
+        if (expected < 0 || got < expected)
+            return;
+        _dropFolder.TryRemove(name, out _);
+        _dropGot.TryRemove(name, out _);
+        Tell("saved " + path);
+    }
+
+    private static string WritePiece(string folder, string name, int offset, byte[] payload, int start)
+    {
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, name);
+        using var file = new FileStream(path, offset == 0 ? FileMode.Create : FileMode.OpenOrCreate, FileAccess.Write, FileShare.Read);
+        if (offset > 0)
+            file.Position = offset;
+        if (payload.Length > start)
+            file.Write(payload, start, payload.Length - start);
+        return path;
+    }
+
+    private static void Tell(string text)
+    {
+        var pipe = _helperPipe;
+        if (pipe is null)
+            return;
+        try
+        {
+            WriteCodedFrame(pipe, LinkPipe.ScreenStatus, Encoding.UTF8.GetBytes(text));
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+        {
+        }
+    }
+
+    private static string FolderFor(int imageX, int imageY, bool hasPoint)
+    {
+        if (Thread.CurrentThread.GetApartmentState() == ApartmentState.STA)
+            return FolderForCore(imageX, imageY, hasPoint);
+        var found = "";
+        var thread = new Thread(() => found = FolderForCore(imageX, imageY, hasPoint)) { IsBackground = true };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join(2000);
+        return string.IsNullOrWhiteSpace(found) ? DesktopFolder() : found;
+    }
+
+    private static string FolderForCore(int imageX, int imageY, bool hasPoint)
     {
         try
         {
-            var type = Type.GetTypeFromProgID("Shell.Application");
-            if (type is not null)
+            if (hasPoint && ScreenPoint(imageX, imageY, out var screenX, out var screenY))
             {
-                dynamic shell = Activator.CreateInstance(type)!;
-                foreach (dynamic window in shell.Windows())
+                var hit = WindowFromPoint(new System.Drawing.Point(screenX, screenY));
+                var root = GetAncestor(hit, 2);
+                if (root == 0)
+                    root = hit;
+                var cls = ClassName(root);
+                if (cls is "Progman" or "WorkerW")
+                    return DesktopFolder();
+                if (!IsCover(root))
                 {
-                    try
-                    {
-                        string path = window.Document.Folder.Self.Path;
-                        if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
-                            return path;
-                    }
-                    catch (Exception ex) when (ex is Microsoft.CSharp.RuntimeBinder.RuntimeBinderException or InvalidCastException or System.IO.IOException)
-                    {
-                    }
+                    var there = ExplorerPath(root);
+                    if (there is not null)
+                        return there;
                 }
             }
+
+            var front = GetForegroundWindow();
+            if (front != 0 && !IsCover(front))
+            {
+                var open = ExplorerPath(front);
+                if (open is not null)
+                    return open;
+            }
         }
-        catch (Exception ex) when (ex is COMException or InvalidCastException or System.IO.IOException)
+        catch (Exception ex) when (ex is COMException or InvalidCastException or IOException or InvalidOperationException)
         {
         }
 
-        var incoming = @"C:\WorkshopLink\Incoming";
-        Directory.CreateDirectory(incoming);
-        return incoming;
+        return DesktopFolder();
+    }
+
+    private static bool ScreenPoint(int imageX, int imageY, out int screenX, out int screenY)
+    {
+        var width = ScreenState.ImageWidth;
+        var height = ScreenState.ImageHeight;
+        if (width < 2 || height < 2)
+        {
+            screenX = 0;
+            screenY = 0;
+            return false;
+        }
+        screenX = ScreenState.Left + (int)Math.Round(imageX * (ScreenState.Width - 1) / (double)(width - 1));
+        screenY = ScreenState.Top + (int)Math.Round(imageY * (ScreenState.Height - 1) / (double)(height - 1));
+        return true;
+    }
+
+    private static string? ExplorerPath(nint hwnd)
+    {
+        if (hwnd == 0)
+            return null;
+        var type = Type.GetTypeFromProgID("Shell.Application");
+        if (type is null)
+            return null;
+        dynamic shell = Activator.CreateInstance(type)!;
+        var root = GetAncestor(hwnd, 2);
+        if (root == 0)
+            root = hwnd;
+        foreach (dynamic window in shell.Windows())
+        {
+            try
+            {
+                var handle = (nint)(int)window.HWND;
+                if (handle != root && handle != hwnd)
+                    continue;
+                string path = window.Document.Folder.Self.Path;
+                if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
+                    return path;
+            }
+            catch (Exception ex) when (ex is Microsoft.CSharp.RuntimeBinder.RuntimeBinderException or InvalidCastException or COMException or IOException)
+            {
+            }
+        }
+        return null;
+    }
+
+    private static string DesktopFolder()
+    {
+        var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        if (string.IsNullOrWhiteSpace(desktop))
+            desktop = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+        return desktop;
+    }
+
+    private static bool IsCover(nint hwnd)
+    {
+        var title = new StringBuilder(120);
+        GetWindowText(hwnd, title, title.Capacity);
+        return title.ToString().StartsWith("Support has covered", StringComparison.Ordinal);
+    }
+
+    private static string ClassName(nint hwnd)
+    {
+        var name = new StringBuilder(128);
+        GetClassName(hwnd, name, name.Capacity);
+        return name.ToString();
+    }
+
+    [DllImport("user32.dll")]
+    private static extern nint WindowFromPoint(System.Drawing.Point point);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetAncestor(nint hwnd, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(nint hwnd, StringBuilder name, int max);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(nint hwnd, StringBuilder text, int max);
+
+    private static string OpenFolder()
+    {
+        var folder = FolderFor(ScreenState.PointerX, ScreenState.PointerY, ScreenState.PointerSeen);
+        if (!string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder))
+            return folder;
+        var desktop = DesktopFolder();
+        Directory.CreateDirectory(desktop);
+        return desktop;
     }
 
     private static void MoveMouse(int x, int y, int button, int wheel)
