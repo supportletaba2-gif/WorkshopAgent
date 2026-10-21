@@ -56,12 +56,12 @@ internal sealed class LinkWorker(ILogger<LinkWorker> logger) : BackgroundService
                 return;
             }
 
-            using var stream = await LinkSeal.OpenServerAsync(client.GetStream(), ReadPipeKey(), stoppingToken);
-            await ServeAsync(stream, stoppingToken);
+            using var stream = await LinkSeal.OpenServerAsync(client.GetStream(), ActivePipeKey(), stoppingToken);
+            await ServeAsync(stream, stoppingToken, local: TrustsLocalNetwork());
         }
     }
 
-    internal static async Task ServeAsync(Stream stream, CancellationToken cancellationToken, RelaySession? pictures = null, DirectoryClient? directory = null)
+    internal static async Task ServeAsync(Stream stream, CancellationToken cancellationToken, RelaySession? pictures = null, DirectoryClient? directory = null, bool local = false)
     {
         await Gate.WaitAsync(cancellationToken);
         var released = false;
@@ -71,7 +71,7 @@ internal sealed class LinkWorker(ILogger<LinkWorker> logger) : BackgroundService
             limit.CancelAfter(TimeSpan.FromMinutes(30));
             var (password, _, environment, blob) = await LinkPipe.ReadRequestAsync(stream, limit.Token);
             var view = environment.TryGetValue("WLINK_ACTION", out var action) && string.Equals(action, "view", StringComparison.Ordinal);
-            var denied = ConsoleGate.Admit(environment, password, out _, out var issued);
+            var denied = ConsoleGate.Admit(environment, password, out _, out var issued, local);
             if (denied is not null)
             {
                 var message = Encoding.UTF8.GetBytes(denied);
@@ -111,6 +111,11 @@ internal sealed class LinkWorker(ILogger<LinkWorker> logger) : BackgroundService
                 Gate.Release();
         }
     }
+
+    internal static byte[] ActivePipeKey() =>
+        TrustsLocalNetwork() ? LinkConstants.LocalPipeKey : ReadPipeKey() ?? [];
+
+    internal static bool TrustsLocalNetwork() => !AgentPlace.IsOffsite();
 
     internal static byte[]? ReadPipeKey()
     {

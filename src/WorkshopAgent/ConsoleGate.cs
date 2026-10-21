@@ -26,7 +26,8 @@ internal static class ConsoleGate
         Dictionary<string, string> environment,
         string password,
         out string console,
-        out string? ticket)
+        out string? ticket,
+        bool local = false)
     {
         console = "";
         ticket = null;
@@ -54,8 +55,8 @@ internal static class ConsoleGate
             return "This PC is locked after wrong passwords. Wait 15 minutes.";
         }
 
-        var passwordOk = LinkSecret.Verify(LinkWorker.ReadHash(), password);
-        var ticketOk = Quiet(action) && Accepts(environment.GetValueOrDefault("WLINK_TICKET"), console);
+        var passwordOk = local || LinkSecret.Verify(LinkWorker.ReadHash(), password);
+        var ticketOk = !local && Quiet(action) && Accepts(environment.GetValueOrDefault("WLINK_TICKET"), console);
         if (!passwordOk && !ticketOk)
         {
             _fails++;
@@ -72,7 +73,7 @@ internal static class ConsoleGate
         if (passwordOk)
             _fails = 0;
 
-        if (!Paired(console))
+        if (!local && !Paired(console))
         {
             if (!passwordOk)
             {
@@ -94,7 +95,7 @@ internal static class ConsoleGate
             Audit(console, action, "paired command center");
         }
 
-        if (!Quiet(action) && action is not "agentupdate")
+        if (!local && !Quiet(action) && action is not "agentupdate")
         {
             if (!passwordOk)
             {

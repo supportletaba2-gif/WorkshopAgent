@@ -122,8 +122,8 @@ internal sealed class PipeHost
                 try
                 {
                     using var limit = new CancellationTokenSource(TimeSpan.FromMinutes(30));
-                    var stream = await LinkSeal.OpenServerAsync(_stream, LinkWorker.ReadPipeKey(), limit.Token);
-                    await LinkWorker.ServeAsync(stream, limit.Token, null, _host._directory);
+                    var stream = await LinkSeal.OpenServerAsync(_stream, LinkWorker.ActivePipeKey(), limit.Token);
+                    await LinkWorker.ServeAsync(stream, limit.Token, null, _host._directory, LinkWorker.TrustsLocalNetwork());
                 }
                 catch (Exception)
                 {

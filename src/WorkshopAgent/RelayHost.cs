@@ -109,8 +109,8 @@ internal sealed class RelayHost
                 limit.CancelAfter(TimeSpan.FromMinutes(30));
                 await sessionNew.AcceptAsync(_directory, from, sdp.GetString() ?? "", _settings, relayOnly: false, limit.Token);
                 var raw = await sessionNew.Opened.WaitAsync(TimeSpan.FromSeconds(25));
-                var stream = await LinkSeal.OpenServerAsync(raw, LinkWorker.ReadPipeKey(), limit.Token);
-                await LinkWorker.ServeAsync(stream, limit.Token, sessionNew, _directory);
+                var stream = await LinkSeal.OpenServerAsync(raw, LinkWorker.ActivePipeKey(), limit.Token);
+                await LinkWorker.ServeAsync(stream, limit.Token, sessionNew, _directory, LinkWorker.TrustsLocalNetwork());
             }
             finally
             {
